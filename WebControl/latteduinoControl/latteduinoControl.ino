@@ -18,6 +18,7 @@ const int allowTenOzBrewPin = 8; //Output, Digital
 const int addWaterPin = A0; //Input, Analog
 const int heatingPin = A1; //Input, Analog
 const int onDetectionPin = A2; //Input, Analog
+const int brewReadyPin = A3; //Input, Analog
 
 boolean isOn = false;
 boolean eightOzAllowed = false;
@@ -38,14 +39,14 @@ void setup()
   pinMode(allowTenOzBrewPin, OUTPUT); //Allows a physical user of the machine to brew a 10 Oz Cup on pin 8
   pinMode(addWaterPin, INPUT); //Tells Arduino if the machine requires water to be added on pin A1
   pinMode(heatingPin, INPUT); //Tells Arduino if the machine is currently heating water on pin A2
-  //digitalWrite(eightOzPin, HIGH);
+  pinMode(brewReadyPin, INPUT); //Tells Arduino if the machine is ready to brew a cup of coffee
+  digitalWrite(lidControlPin, HIGH); //Allow arduino to know that the switch is closed on the lid
 }
 
 void loop()
 {
-  if(analogRead(onDetectionPin) > 420) {isOn = true;}
-  else {isOn = false;}
-  
+  IsOn();
+
   EthernetClient client = server.available();  // try to get client
 
   if (client) {  // got client?
@@ -57,6 +58,9 @@ void loop()
         // last line of client request is blank and ends with \n
         // respond to client only after last line received
         if (c == '\n' && currentLineIsBlank) {
+
+          IsOn();
+
           // send a standard http response header
           client.println("HTTP/1.1 200 OK");
           client.println("Content-Type: text/html");
@@ -69,22 +73,35 @@ void loop()
           client.println("<title>Arduino Coffee Machine Control</title>");
           client.println("</head>");
           client.println("<body>");
-          int onStatus = analogRead(A5);
-          client.print("<p style = color:red>");
-          client.print(analogRead(A5));
-          client.println("</p>");
-          Serial.println(onStatus);
+          
           client.println("<h1>latteduino</h1>");
+          
           client.println("<p>Click to switch the machine on and off.</p>");
           client.println("<form method=\"get\">");
           ProcessPowerCheckbox(client);
           client.println("</form>");
+          
+          if(analogRead(heatingPin) < 200)
+          {
+          client.print("<p style = color:red>");
+          client.print("The Machine is heating up.");
+          client.println("</p>");
+          }
+          
+          IsOn();
+          
+          delay(200);
+          
+          if(isOn && (analogRead(heatingPin) > 200))
+          {
+            client.println("<p>Ready to Brew.</p>");
+          }
 
           client.println("<p>Click to brew an 8 Oz cup of joe.</p>");
           client.println("<form method=\"get\">");
           Process8OzBrewCheckbox(client);
           client.println("</form>");
-          
+
           client.println("</body>");
           client.println("</html>");
           Serial.print(HTTP_req);
@@ -115,30 +132,62 @@ void ProcessPowerCheckbox(EthernetClient cl)
   if (HTTP_req.indexOf("Power=2") > -1) {  // see if checkbox was clicked
     changed = 1;
   }
-  if (isOn) {    // switch machine on
-    if (changed)
-    {
-      digitalWrite(onPin, HIGH);
-      delay(100);
-      digitalWrite(onPin, LOW);
-    }
-    // checkbox is checked
+
+  IsOn();
+
+  if (isOn && !changed)
+  {
     cl.println("<input type=\"checkbox\" name=\"Power\" value=\"2\" \
-        onclick=\"submit();\" checked>Power");
+        onclick=\"submit();\" >Power");
+    IsOn();
   }
-  if (!isOn) {             // switch machine off
-    if (changed)
-    {
-      digitalWrite(onPin, HIGH);
-      delay(100);
-      digitalWrite(onPin, LOW);
-    }
-    // checkbox is unchecked
+  else if(isOn && changed)
+  {
+    digitalWrite(onPin, HIGH);
+    delay(100);
+    digitalWrite(onPin, LOW);
     cl.println("<input type=\"checkbox\" name=\"Power\" value=\"2\" \
-        onclick=\"submit();\">Power");
+        onclick=\"submit();\" >Power");
+    IsOn();
   }
-  changed = 0;
-  delay(100);
+  else if (!isOn && changed)
+  {
+    digitalWrite(onPin, HIGH);
+    delay(100);
+    digitalWrite(onPin, LOW);
+    cl.println("<input type=\"checkbox\" name=\"Power\" value=\"2\" \
+        onclick=\"submit();\" >Power");
+    IsOn();
+  }
+  else if(!isOn && !changed)
+  {
+    cl.println("<input type=\"checkbox\" name=\"Power\" value=\"2\" \
+        onclick=\"submit();\" >Power");
+    IsOn();
+  }
+  
+if (isOn)
+{
+  cl.println("<p style = color:green>");
+  cl.println("Machine is On");
+  cl.println("</P>");
+}
+else
+{
+  cl.println("<p style = color:red>");
+  cl.println("Machine is Off");
+  cl.println("</P>");
+}
+
+if(analogRead(addWaterPin) < 300)
+          {
+          cl.print("<p style = color:blue>");
+          cl.print("Add Water, or literally nothing will work.");
+          cl.println("</p>");
+          }
+          
+changed = 0;
+delay(100);
 }
 
 void Process8OzBrewCheckbox(EthernetClient cl)
@@ -148,23 +197,57 @@ void Process8OzBrewCheckbox(EthernetClient cl)
     changed = 1;
   }
 
-  if (changed)
+  if (changed && isOn)
   {
     cl.println("<input type=\"checkbox\" name=\"Brew\" value=\"3\" \
         onclick=\"submit();\" checked>Brew");
+    
+    digitalWrite(lidControlPin, LOW);
+    delay(200);
+    digitalWrite(lidControlPin, HIGH);
+
+    delay(100);    
+    
     digitalWrite(3, HIGH);
     delay(100);
     digitalWrite(3, LOW);
-    /*cl.println("<input type=\"checkbox\" name=\"Brew\" value=\"3\" \
-        onclick=\"submit();\">Brew");*/
   }
-  else
+  else if (!changed && isOn)
   {
     cl.println("<input type=\"checkbox\" name=\"Brew\" value=\"3\" \
         onclick=\"submit();\">Brew");
   }
-  // checkbox is checked
-  
+
   changed = 0;
   delay(100);
+}
+
+void IsOn()
+{
+  if (analogRead(addWaterPin) < 300)
+  {
+    isOn = true;
+  }
+  else if (analogRead(onDetectionPin) < 300) {
+    isOn = true;
+  }
+  else if(analogRead(heatingPin) < 200)
+  {
+    isOn = true;
+  }
+  else {
+    isOn = false;
+  }
+}
+
+void WaterCheck()
+{
+  if (analogRead(addWaterPin) < 300)
+  {
+    enoughWater = false;
+  }
+  else
+  {
+    enoughWater = true;
+  }
 }
